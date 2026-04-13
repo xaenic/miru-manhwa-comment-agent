@@ -18,8 +18,8 @@ import requests
 
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:5000"
-DEFAULT_GROK_BASE_URL = "https://api.x.ai/v1"
-DEFAULT_GROK_MODEL = "grok-2-vision-latest"
+DEFAULT_QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+DEFAULT_QWEN_MODEL = "qwen-vl-max-latest"
 DEFAULT_TIMEOUT_SECONDS = 30
 
 
@@ -38,15 +38,9 @@ class ChapterTarget:
     chapter_title: str | None
 
 
-def normalize_language_code(value: str | None) -> str:
-    if not isinstance(value, str):
-        return ""
-    return value.strip().casefold()
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate short AI comment ideas from a Miru manhwa chapter image using Grok."
+        description="Generate short AI comment ideas from a Miru manhwa chapter image using Qwen Vision."
     )
     parser.add_argument("--series-slug", required=True, help="Miru manga/manhwa series slug, for example solo-leveling.r8oo")
     parser.add_argument("--entry-slug", help="Chapter entry slug. Defaults to the latest chapter for the chosen language.")
@@ -76,14 +70,24 @@ def parse_args() -> argparse.Namespace:
         help=f"Miru backend base URL. Default: {DEFAULT_API_BASE_URL}",
     )
     parser.add_argument(
-        "--grok-base-url",
-        default=os.environ.get("XAI_BASE_URL", DEFAULT_GROK_BASE_URL),
-        help=f"xAI API base URL. Default: {DEFAULT_GROK_BASE_URL}",
+        "--llm-base-url",
+        default=(
+            os.environ.get("QWEN_BASE_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("XAI_BASE_URL")
+            or DEFAULT_QWEN_BASE_URL
+        ),
+        help=f"OpenAI-compatible vision API base URL. Default: {DEFAULT_QWEN_BASE_URL}",
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("XAI_MODEL", DEFAULT_GROK_MODEL),
-        help=f"Grok vision model name. Default: {DEFAULT_GROK_MODEL}",
+        default=(
+            os.environ.get("QWEN_MODEL")
+            or os.environ.get("OPENAI_MODEL")
+            or os.environ.get("XAI_MODEL")
+            or DEFAULT_QWEN_MODEL
+        ),
+        help=f"Vision model name. Default: {DEFAULT_QWEN_MODEL}",
     )
     parser.add_argument(
         "--timeout",
@@ -144,7 +148,7 @@ def select_latest_chapter(
     for item in items:
         if not isinstance(item, dict):
             continue
-        if normalize_language_code(item.get("language")) != normalize_language_code(language):
+        if item.get("language") != language:
             continue
         entry_slug = item.get("entry_slug")
         if isinstance(entry_slug, str) and entry_slug.strip():
@@ -153,15 +157,7 @@ def select_latest_chapter(
             chapter_title = item.get("title") if isinstance(item.get("title"), str) else None
             return entry_slug.strip(), chapter_id, chapter_number, chapter_title
 
-    available_languages = sorted(
-        {
-            str(item.get("language")).strip()
-            for item in items
-            if isinstance(item, dict) and isinstance(item.get("language"), str) and str(item.get("language")).strip()
-        }
-    )
-    available_message = f" Available: {', '.join(available_languages)}." if available_languages else ""
-    raise ScriptError(f"No chapter entries were found for language {language!r}.{available_message}")
+    raise ScriptError(f"No chapter entries were found for language {language!r}.")
 
 
 def load_target(args: argparse.Namespace, session: requests.Session) -> ChapterTarget:
@@ -324,13 +320,13 @@ def build_messages(target: ChapterTarget, image_count: int, comment_count: int, 
 def extract_text_content(payload: dict[str, Any]) -> str:
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
-        raise ScriptError("Grok did not return any choices.")
+        raise ScriptError("The vision model did not return any choices.")
     first_choice = choices[0]
     if not isinstance(first_choice, dict):
-        raise ScriptError("Grok returned an invalid choice payload.")
+        raise ScriptError("The vision model returned an invalid choice payload.")
     message = first_choice.get("message")
     if not isinstance(message, dict):
-        raise ScriptError("Grok did not return a message payload.")
+        raise ScriptError("The vision model did not return a message payload.")
     content = message.get("content")
     if isinstance(content, str):
         return content
@@ -344,7 +340,7 @@ def extract_text_content(payload: dict[str, Any]) -> str:
                 parts.append(text.strip())
         if parts:
             return "\n".join(parts)
-    raise ScriptError("Grok response did not contain text content.")
+    raise ScriptError("The vision model response did not contain text content.")
 
 
 def normalize_comment_lines(raw_text: str, comment_count: int) -> list[str]:
@@ -358,7 +354,7 @@ def normalize_comment_lines(raw_text: str, comment_count: int) -> list[str]:
     return comments
 
 
-def call_grok(
+def call_vision_model(
     session: requests.Session,
     *,
     base_url: str,
@@ -385,11 +381,11 @@ def call_grok(
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, dict):
-        raise ScriptError("Grok returned an invalid JSON payload.")
+        raise ScriptError("The vision model returned an invalid JSON payload.")
     raw_text = extract_text_content(payload)
     comments = normalize_comment_lines(raw_text, comment_count)
     if not comments:
-        raise ScriptError("Grok returned text, but no usable comment lines were found.")
+        raise ScriptError("The vision model returned text, but no usable comment lines were found.")
     return comments
 
 
@@ -417,9 +413,15 @@ def print_text_output(target: ChapterTarget, selected_image_urls: list[str], com
 
 def main() -> int:
     args = parse_args()
-    api_key = os.environ.get("XAI_API_KEY", "").strip()
+    api_key = (
+        os.environ.get("QWEN_API_KEY")
+        or os.environ.get("DASHSCOPE_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("XAI_API_KEY")
+        or ""
+    ).strip()
     if not api_key:
-        print("XAI_API_KEY is required.", file=sys.stderr)
+        print("QWEN_API_KEY or DASHSCOPE_API_KEY is required.", file=sys.stderr)
         return 1
 
     session = requests.Session()
@@ -438,9 +440,9 @@ def main() -> int:
             fetch_image_as_data_url(session, image_url, timeout=args.timeout)
             for image_url in selected_image_urls
         ]
-        comments = call_grok(
+        comments = call_vision_model(
             session,
-            base_url=args.grok_base_url,
+            base_url=args.llm_base_url,
             api_key=api_key,
             model=args.model,
             target=target,

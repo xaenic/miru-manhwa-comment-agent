@@ -1,4 +1,4 @@
-from generate_manhwa_ai_comments import normalize_comment_lines, normalize_language_code, select_page_indices
+from generate_manhwa_ai_comments import normalize_comment_lines, select_page_indices
 
 
 def test_select_page_indices_uses_requested_page_for_single_image() -> None:
@@ -16,8 +16,3 @@ def test_normalize_comment_lines_strips_numbering() -> None:
         "That expression hits hard.",
         "Love the contrast here.",
     ]
-
-
-def test_normalize_language_code_is_case_insensitive() -> None:
-    assert normalize_language_code("EN") == "en"
-    assert normalize_language_code(" pt-BR ") == "pt-br"

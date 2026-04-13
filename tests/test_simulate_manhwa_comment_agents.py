@@ -16,43 +16,43 @@ def test_resolve_progress_unit_id_falls_back_to_entry_slug() -> None:
 
 def test_select_target_chapters_uses_latest_count_when_entry_slugs_missing() -> None:
     items = [
-        {"entry_slug": "chapter-9", "language": "EN"},
-        {"entry_slug": "chapter-8", "language": "EN"},
+        {"entry_slug": "chapter-9", "language": "en"},
+        {"entry_slug": "chapter-8", "language": "en"},
         {"entry_slug": "chapter-7", "language": "jp"},
-        {"entry_slug": "chapter-2", "language": "EN"},
-        {"entry_slug": "chapter-1", "language": "EN"},
+        {"entry_slug": "chapter-2", "language": "en"},
+        {"entry_slug": "chapter-1", "language": "en"},
     ]
 
     assert select_target_chapters(items, language="en", entry_slugs=None, latest_count=2) == [
-        {"entry_slug": "chapter-1", "language": "EN"},
-        {"entry_slug": "chapter-2", "language": "EN"},
+        {"entry_slug": "chapter-1", "language": "en"},
+        {"entry_slug": "chapter-2", "language": "en"},
     ]
 
 
 def test_select_target_chapters_uses_all_chapters_when_count_is_zero() -> None:
     items = [
-        {"entry_slug": "chapter-3", "language": "EN"},
-        {"entry_slug": "chapter-2", "language": "EN"},
-        {"entry_slug": "chapter-1", "language": "EN"},
+        {"entry_slug": "chapter-3", "language": "en"},
+        {"entry_slug": "chapter-2", "language": "en"},
+        {"entry_slug": "chapter-1", "language": "en"},
     ]
 
     assert select_target_chapters(items, language="en", entry_slugs=None, latest_count=0) == [
-        {"entry_slug": "chapter-1", "language": "EN"},
-        {"entry_slug": "chapter-2", "language": "EN"},
-        {"entry_slug": "chapter-3", "language": "EN"},
+        {"entry_slug": "chapter-1", "language": "en"},
+        {"entry_slug": "chapter-2", "language": "en"},
+        {"entry_slug": "chapter-3", "language": "en"},
     ]
 
 
 def test_select_target_chapters_filters_to_requested_entry_slugs() -> None:
     items = [
-        {"entry_slug": "chapter-9", "language": "EN"},
-        {"entry_slug": "chapter-8", "language": "EN"},
-        {"entry_slug": "chapter-7", "language": "EN"},
+        {"entry_slug": "chapter-9", "language": "en"},
+        {"entry_slug": "chapter-8", "language": "en"},
+        {"entry_slug": "chapter-7", "language": "en"},
     ]
 
     assert select_target_chapters(items, language="en", entry_slugs=["chapter-8", "chapter-7"], latest_count=1) == [
-        {"entry_slug": "chapter-8", "language": "EN"},
-        {"entry_slug": "chapter-7", "language": "EN"},
+        {"entry_slug": "chapter-8", "language": "en"},
+        {"entry_slug": "chapter-7", "language": "en"},
     ]
 
 

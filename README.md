@@ -3,7 +3,7 @@
 Standalone tooling for a Miru manhwa comment simulation workflow.
 
 It includes:
-- `generate_manhwa_ai_comments.py` to generate reader-style comment ideas from chapter images with Grok
+- `generate_manhwa_ai_comments.py` to generate reader-style comment ideas from chapter images with Qwen Vision
 - `simulate_manhwa_comment_agents.py` to create a fresh Miru account every cycle, generate a comment, and post it to the next chapter thread
 - `setup_manhwa_agent.sh` to create a virtualenv, install dependencies, and bootstrap `.env`
 
@@ -11,7 +11,7 @@ It includes:
 
 - Python 3.10+
 - A running Miru backend with manga routes enabled
-- `XAI_API_KEY` for Grok image analysis
+- `QWEN_API_KEY` for Qwen Vision image analysis
 
 ## Setup
 
@@ -22,6 +22,7 @@ It includes:
 That creates `.venv`, installs `requirements.txt`, and copies `.env.example` to `.env` if needed.
 
 The simulator uses only your backend API for registration, login, and comment posting. It does not call Supabase directly.
+The vision request path is OpenAI-compatible and defaults to Qwen Vision.
 
 ## Generate Comments Only
 

@@ -17,18 +17,17 @@ import requests
 from generate_manhwa_ai_comments import (
     ChapterTarget,
     ScriptError,
-    call_grok,
+    call_vision_model,
     fetch_image_as_data_url,
     fetch_series_title,
     load_chapter_pages,
-    normalize_language_code,
     select_page_indices,
 )
 
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:5000"
-DEFAULT_GROK_BASE_URL = "https://api.x.ai/v1"
-DEFAULT_GROK_MODEL = "grok-2-vision-latest"
+DEFAULT_QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+DEFAULT_QWEN_MODEL = "qwen-vl-max-latest"
 DEFAULT_PROVIDER = "mangafire"
 DEFAULT_INTERVAL_MINUTES = 10
 DEFAULT_TIMEOUT_SECONDS = 30
@@ -111,14 +110,24 @@ def parse_args() -> argparse.Namespace:
         help=f"Miru backend base URL. Default: {DEFAULT_API_BASE_URL}",
     )
     parser.add_argument(
-        "--grok-base-url",
-        default=os.environ.get("XAI_BASE_URL", DEFAULT_GROK_BASE_URL),
-        help=f"xAI API base URL. Default: {DEFAULT_GROK_BASE_URL}",
+        "--llm-base-url",
+        default=(
+            os.environ.get("QWEN_BASE_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("XAI_BASE_URL")
+            or DEFAULT_QWEN_BASE_URL
+        ),
+        help=f"OpenAI-compatible vision API base URL. Default: {DEFAULT_QWEN_BASE_URL}",
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("XAI_MODEL", DEFAULT_GROK_MODEL),
-        help=f"Grok vision model name. Default: {DEFAULT_GROK_MODEL}",
+        default=(
+            os.environ.get("QWEN_MODEL")
+            or os.environ.get("OPENAI_MODEL")
+            or os.environ.get("XAI_MODEL")
+            or DEFAULT_QWEN_MODEL
+        ),
+        help=f"Vision model name. Default: {DEFAULT_QWEN_MODEL}",
     )
     parser.add_argument(
         "--provider",
@@ -215,11 +224,7 @@ def select_target_chapters(
     entry_slugs: list[str] | None,
     latest_count: int,
 ) -> list[dict[str, object]]:
-    normalized_language = normalize_language_code(language)
-    by_language = [
-        item for item in items
-        if normalize_language_code(item.get("language")) == normalized_language
-    ]
+    by_language = [item for item in items if item.get("language") == language]
     if entry_slugs:
         selected: list[dict[str, object]] = []
         wanted = [entry_slug.strip() for entry_slug in entry_slugs if entry_slug.strip()]
@@ -240,15 +245,7 @@ def select_target_chapters(
     if latest_count > 0:
         selected = selected[:latest_count]
     if not selected:
-        available_languages = sorted(
-            {
-                str(item.get("language")).strip()
-                for item in items
-                if isinstance(item.get("language"), str) and str(item.get("language")).strip()
-            }
-        )
-        available_message = f" Available: {', '.join(available_languages)}." if available_languages else ""
-        raise ScriptError(f"No chapters were found for language {language!r}.{available_message}")
+        raise ScriptError(f"No chapters were found for language {language!r}.")
     return selected
 
 
@@ -398,8 +395,8 @@ def generate_comment_for_target(
     *,
     target: ChapterTarget,
     api_base_url: str,
-    grok_base_url: str,
-    grok_api_key: str,
+    llm_base_url: str,
+    llm_api_key: str,
     model: str,
     comment_count: int,
     page: int,
@@ -413,10 +410,10 @@ def generate_comment_for_target(
         fetch_image_as_data_url(session, image_url, timeout=timeout)
         for image_url in selected_image_urls
     ]
-    candidate_comments = call_grok(
+    candidate_comments = call_vision_model(
         session,
-        base_url=grok_base_url,
-        api_key=grok_api_key,
+        base_url=llm_base_url,
+        api_key=llm_api_key,
         model=model,
         target=replace(target),
         image_data_urls=image_data_urls,
@@ -459,7 +456,7 @@ def run_cycle(
     session: requests.Session,
     args: argparse.Namespace,
     *,
-    grok_api_key: str,
+    llm_api_key: str,
 ) -> bool:
     state_file = Path(args.state_file)
     state = load_state(state_file)
@@ -510,8 +507,8 @@ def run_cycle(
         session,
         target=target,
         api_base_url=args.api_base_url,
-        grok_base_url=args.grok_base_url,
-        grok_api_key=grok_api_key,
+        llm_base_url=args.llm_base_url,
+        llm_api_key=llm_api_key,
         model=args.model,
         comment_count=args.comment_count,
         page=args.page,
@@ -552,12 +549,18 @@ def main() -> int:
     load_env_file(Path(".env"))
     args = parse_args()
 
-    grok_api_key = os.environ.get("XAI_API_KEY", "").strip()
+    llm_api_key = (
+        os.environ.get("QWEN_API_KEY")
+        or os.environ.get("DASHSCOPE_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("XAI_API_KEY")
+        or ""
+    ).strip()
 
     missing = [
         name
         for name, value in (
-            ("XAI_API_KEY", grok_api_key),
+            ("QWEN_API_KEY", llm_api_key),
         )
         if not value
     ]
@@ -574,7 +577,7 @@ def main() -> int:
             should_continue = run_cycle(
                 session,
                 args,
-                grok_api_key=grok_api_key,
+                llm_api_key=llm_api_key,
             )
         except requests.HTTPError as exc:
             detail = exc.response.text.strip() if exc.response is not None else str(exc)
