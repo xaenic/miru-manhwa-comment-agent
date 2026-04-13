@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${ROOT_DIR}/.venv"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+VENV_PYTHON="${VENV_DIR}/bin/python"
 
 cd "${ROOT_DIR}"
 
@@ -17,8 +18,29 @@ if [ ! -d "${VENV_DIR}" ]; then
   "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 fi
 
-"${VENV_DIR}/bin/python" -m pip install --upgrade pip
-"${VENV_DIR}/bin/python" -m pip install -r requirements.txt
+if ! "${VENV_PYTHON}" -m pip --version >/dev/null 2>&1; then
+  if "${VENV_PYTHON}" -m ensurepip --upgrade >/dev/null 2>&1; then
+    echo "Bootstrapped pip with ensurepip"
+  else
+    BOOTSTRAP_SCRIPT="$(mktemp)"
+    trap 'rm -f "${BOOTSTRAP_SCRIPT}"' EXIT
+
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL https://bootstrap.pypa.io/get-pip.py -o "${BOOTSTRAP_SCRIPT}"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO "${BOOTSTRAP_SCRIPT}" https://bootstrap.pypa.io/get-pip.py
+    else
+      echo "pip is missing and neither ensurepip, curl, nor wget is available." >&2
+      exit 1
+    fi
+
+    "${VENV_PYTHON}" "${BOOTSTRAP_SCRIPT}"
+    echo "Bootstrapped pip with get-pip.py"
+  fi
+fi
+
+"${VENV_PYTHON}" -m pip install --upgrade pip
+"${VENV_PYTHON}" -m pip install -r requirements.txt
 
 if [ ! -f "${ROOT_DIR}/.env" ]; then
   cp "${ROOT_DIR}/.env.example" "${ROOT_DIR}/.env"
