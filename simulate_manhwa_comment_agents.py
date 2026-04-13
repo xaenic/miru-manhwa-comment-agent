@@ -21,13 +21,14 @@ from generate_manhwa_ai_comments import (
     fetch_image_as_data_url,
     fetch_series_title,
     load_chapter_pages,
+    normalize_language_code,
     select_page_indices,
 )
 
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:5000"
-DEFAULT_QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-DEFAULT_QWEN_MODEL = "qwen-vl-max-latest"
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_PROVIDER = "mangafire"
 DEFAULT_INTERVAL_MINUTES = 10
 DEFAULT_TIMEOUT_SECONDS = 30
@@ -51,7 +52,7 @@ def load_env_file(path: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Private Miru manhwa agent simulator: create an account, generate Grok comments from chapter images, and post them."
+        description="Private Miru manhwa agent simulator: create an account, generate Gemini comments from chapter images, and post them."
     )
     parser.add_argument("--series-slug", required=True, help="Miru manga/manhwa series slug.")
     parser.add_argument("--language", default="en", help="Chapter language code. Default: en")
@@ -90,13 +91,13 @@ def parse_args() -> argparse.Namespace:
         "--sample-pages",
         type=int,
         default=1,
-        help="How many chapter pages to send to Grok per chapter. Default: 1",
+        help="How many chapter pages to send to the vision model per chapter. Default: 1",
     )
     parser.add_argument(
         "--comment-count",
         type=int,
         default=5,
-        help="How many candidate comments to ask Grok for before selecting one. Default: 5",
+        help="How many candidate comments to ask the vision model for before selecting one. Default: 5",
     )
     parser.add_argument(
         "--comments-per-chapter",
@@ -112,22 +113,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--llm-base-url",
         default=(
-            os.environ.get("QWEN_BASE_URL")
+            os.environ.get("GEMINI_BASE_URL")
+            or os.environ.get("GOOGLE_BASE_URL")
+            or os.environ.get("QWEN_BASE_URL")
             or os.environ.get("OPENAI_BASE_URL")
             or os.environ.get("XAI_BASE_URL")
-            or DEFAULT_QWEN_BASE_URL
+            or DEFAULT_GEMINI_BASE_URL
         ),
-        help=f"OpenAI-compatible vision API base URL. Default: {DEFAULT_QWEN_BASE_URL}",
+        help=f"OpenAI-compatible vision API base URL. Default: {DEFAULT_GEMINI_BASE_URL}",
     )
     parser.add_argument(
         "--model",
         default=(
-            os.environ.get("QWEN_MODEL")
+            os.environ.get("GEMINI_MODEL")
+            or os.environ.get("GOOGLE_MODEL")
+            or os.environ.get("QWEN_MODEL")
             or os.environ.get("OPENAI_MODEL")
             or os.environ.get("XAI_MODEL")
-            or DEFAULT_QWEN_MODEL
+            or DEFAULT_GEMINI_MODEL
         ),
-        help=f"Vision model name. Default: {DEFAULT_QWEN_MODEL}",
+        help=f"Vision model name. Default: {DEFAULT_GEMINI_MODEL}",
     )
     parser.add_argument(
         "--provider",
@@ -203,12 +208,16 @@ def list_chapter_items(
     api_base_url: str,
     *,
     series_slug: str,
+    provider: str,
     timeout: int,
 ) -> list[dict[str, object]]:
     payload = request_json(
         session,
         "GET",
-        build_url(api_base_url, f"/api/v1/manga/series/{quote(series_slug, safe='')}/chapters"),
+        build_url(
+            api_base_url,
+            f"/api/v1/manga/series/{quote(series_slug, safe='')}/chapters?provider={quote(provider, safe='')}",
+        ),
         timeout=timeout,
     )
     items = payload.get("items")
@@ -224,7 +233,11 @@ def select_target_chapters(
     entry_slugs: list[str] | None,
     latest_count: int,
 ) -> list[dict[str, object]]:
-    by_language = [item for item in items if item.get("language") == language]
+    normalized_language = normalize_language_code(language)
+    by_language = [
+        item for item in items
+        if normalize_language_code(item.get("language")) == normalized_language
+    ]
     if entry_slugs:
         selected: list[dict[str, object]] = []
         wanted = [entry_slug.strip() for entry_slug in entry_slugs if entry_slug.strip()]
@@ -245,7 +258,15 @@ def select_target_chapters(
     if latest_count > 0:
         selected = selected[:latest_count]
     if not selected:
-        raise ScriptError(f"No chapters were found for language {language!r}.")
+        available_languages = sorted(
+            {
+                str(item.get("language")).strip()
+                for item in items
+                if isinstance(item.get("language"), str) and str(item.get("language")).strip()
+            }
+        )
+        available_message = f" Available: {', '.join(available_languages)}." if available_languages else ""
+        raise ScriptError(f"No chapters were found for language {language!r}.{available_message}")
     return selected
 
 
@@ -255,12 +276,13 @@ def build_targets(
     *,
     series_slug: str,
     language: str,
+    provider: str,
     entry_slugs: list[str] | None,
     latest_count: int,
     timeout: int,
 ) -> list[ChapterTarget]:
     series_title = fetch_series_title(session, api_base_url, series_slug=series_slug, timeout=timeout)
-    items = list_chapter_items(session, api_base_url, series_slug=series_slug, timeout=timeout)
+    items = list_chapter_items(session, api_base_url, series_slug=series_slug, provider=provider, timeout=timeout)
     selected_items = select_target_chapters(items, language=language, entry_slugs=entry_slugs, latest_count=latest_count)
     return [
         ChapterTarget(
@@ -395,6 +417,7 @@ def generate_comment_for_target(
     *,
     target: ChapterTarget,
     api_base_url: str,
+    provider: str,
     llm_base_url: str,
     llm_api_key: str,
     model: str,
@@ -403,7 +426,7 @@ def generate_comment_for_target(
     sample_pages: int,
     timeout: int,
 ) -> tuple[str, list[str]]:
-    page_images = load_chapter_pages(session, api_base_url, target=target, timeout=timeout)
+    page_images = load_chapter_pages(session, api_base_url, target=target, provider=provider, timeout=timeout)
     indices = select_page_indices(len(page_images), sample_pages, page)
     selected_image_urls = [page_images[index] for index in indices]
     image_data_urls = [
@@ -466,6 +489,7 @@ def run_cycle(
         args.api_base_url,
         series_slug=args.series_slug,
         language=args.language,
+        provider=args.provider,
         entry_slugs=args.entry_slugs,
         latest_count=args.latest_count,
         timeout=args.timeout,
@@ -507,6 +531,7 @@ def run_cycle(
         session,
         target=target,
         api_base_url=args.api_base_url,
+        provider=args.provider,
         llm_base_url=args.llm_base_url,
         llm_api_key=llm_api_key,
         model=args.model,
@@ -550,7 +575,9 @@ def main() -> int:
     args = parse_args()
 
     llm_api_key = (
-        os.environ.get("QWEN_API_KEY")
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("QWEN_API_KEY")
         or os.environ.get("DASHSCOPE_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
         or os.environ.get("XAI_API_KEY")
@@ -560,7 +587,7 @@ def main() -> int:
     missing = [
         name
         for name, value in (
-            ("QWEN_API_KEY", llm_api_key),
+            ("GEMINI_API_KEY", llm_api_key),
         )
         if not value
     ]

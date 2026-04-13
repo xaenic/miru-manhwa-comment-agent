@@ -52,7 +52,7 @@ cat <<'EOF'
 Setup complete.
 
 Required env vars in .env before posting:
-- QWEN_API_KEY
+- GEMINI_API_KEY
 
 One-cycle dry run:
   ./.venv/bin/python simulate_manhwa_comment_agents.py \

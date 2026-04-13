@@ -18,8 +18,8 @@ import requests
 
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:5000"
-DEFAULT_QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-DEFAULT_QWEN_MODEL = "qwen-vl-max-latest"
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_TIMEOUT_SECONDS = 30
 
 
@@ -38,9 +38,15 @@ class ChapterTarget:
     chapter_title: str | None
 
 
+def normalize_language_code(value: str | None) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip().casefold()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate short AI comment ideas from a Miru manhwa chapter image using Qwen Vision."
+        description="Generate short AI comment ideas from a Miru manhwa chapter image using Gemini Vision."
     )
     parser.add_argument("--series-slug", required=True, help="Miru manga/manhwa series slug, for example solo-leveling.r8oo")
     parser.add_argument("--entry-slug", help="Chapter entry slug. Defaults to the latest chapter for the chosen language.")
@@ -50,19 +56,24 @@ def parse_args() -> argparse.Namespace:
         "--page",
         type=int,
         default=1,
-        help="1-based page number to send to Grok when using one image. Default: 1",
+        help="1-based page number to send to the vision model when using one image. Default: 1",
     )
     parser.add_argument(
         "--sample-pages",
         type=int,
         default=1,
-        help="How many chapter pages to send to Grok. Default: 1",
+        help="How many chapter pages to send to the vision model. Default: 1",
     )
     parser.add_argument(
         "--comment-count",
         type=int,
         default=5,
-        help="How many short comments to request from Grok. Default: 5",
+        help="How many short comments to request from the vision model. Default: 5",
+    )
+    parser.add_argument(
+        "--provider",
+        default="mangafire",
+        help="Manga provider to pass through to the backend API. Default: mangafire",
     )
     parser.add_argument(
         "--api-base-url",
@@ -72,22 +83,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--llm-base-url",
         default=(
-            os.environ.get("QWEN_BASE_URL")
+            os.environ.get("GEMINI_BASE_URL")
+            or os.environ.get("GOOGLE_BASE_URL")
+            or os.environ.get("QWEN_BASE_URL")
             or os.environ.get("OPENAI_BASE_URL")
             or os.environ.get("XAI_BASE_URL")
-            or DEFAULT_QWEN_BASE_URL
+            or DEFAULT_GEMINI_BASE_URL
         ),
-        help=f"OpenAI-compatible vision API base URL. Default: {DEFAULT_QWEN_BASE_URL}",
+        help=f"OpenAI-compatible vision API base URL. Default: {DEFAULT_GEMINI_BASE_URL}",
     )
     parser.add_argument(
         "--model",
         default=(
-            os.environ.get("QWEN_MODEL")
+            os.environ.get("GEMINI_MODEL")
+            or os.environ.get("GOOGLE_MODEL")
+            or os.environ.get("QWEN_MODEL")
             or os.environ.get("OPENAI_MODEL")
             or os.environ.get("XAI_MODEL")
-            or DEFAULT_QWEN_MODEL
+            or DEFAULT_GEMINI_MODEL
         ),
-        help=f"Vision model name. Default: {DEFAULT_QWEN_MODEL}",
+        help=f"Vision model name. Default: {DEFAULT_GEMINI_MODEL}",
     )
     parser.add_argument(
         "--timeout",
@@ -134,11 +149,13 @@ def select_latest_chapter(
     *,
     series_slug: str,
     language: str,
+    provider: str,
     timeout: int,
 ) -> tuple[str, str | None, str | None, str]:
     payload = request_json(
         session,
         build_url(base_url, f"/api/v1/manga/series/{quote(series_slug, safe='')}/chapters"),
+        params={"provider": provider},
         timeout=timeout,
     )
     items = payload.get("items")
@@ -148,7 +165,7 @@ def select_latest_chapter(
     for item in items:
         if not isinstance(item, dict):
             continue
-        if item.get("language") != language:
+        if normalize_language_code(item.get("language")) != normalize_language_code(language):
             continue
         entry_slug = item.get("entry_slug")
         if isinstance(entry_slug, str) and entry_slug.strip():
@@ -157,7 +174,15 @@ def select_latest_chapter(
             chapter_title = item.get("title") if isinstance(item.get("title"), str) else None
             return entry_slug.strip(), chapter_id, chapter_number, chapter_title
 
-    raise ScriptError(f"No chapter entries were found for language {language!r}.")
+    available_languages = sorted(
+        {
+            str(item.get("language")).strip()
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("language"), str) and str(item.get("language")).strip()
+        }
+    )
+    available_message = f" Available: {', '.join(available_languages)}." if available_languages else ""
+    raise ScriptError(f"No chapter entries were found for language {language!r}.{available_message}")
 
 
 def load_target(args: argparse.Namespace, session: requests.Session) -> ChapterTarget:
@@ -183,6 +208,7 @@ def load_target(args: argparse.Namespace, session: requests.Session) -> ChapterT
         args.api_base_url,
         series_slug=args.series_slug,
         language=args.language,
+        provider=args.provider,
         timeout=args.timeout,
     )
     return ChapterTarget(
@@ -201,9 +227,12 @@ def load_chapter_pages(
     base_url: str,
     *,
     target: ChapterTarget,
+    provider: str,
     timeout: int,
 ) -> list[str]:
-    params = {"chapterId": target.chapter_id} if target.chapter_id else None
+    params: dict[str, str] = {"provider": provider}
+    if target.chapter_id:
+        params["chapterId"] = target.chapter_id
     payload = request_json(
         session,
         build_url(
@@ -414,14 +443,16 @@ def print_text_output(target: ChapterTarget, selected_image_urls: list[str], com
 def main() -> int:
     args = parse_args()
     api_key = (
-        os.environ.get("QWEN_API_KEY")
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("QWEN_API_KEY")
         or os.environ.get("DASHSCOPE_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
         or os.environ.get("XAI_API_KEY")
         or ""
     ).strip()
     if not api_key:
-        print("QWEN_API_KEY or DASHSCOPE_API_KEY is required.", file=sys.stderr)
+        print("GEMINI_API_KEY or GOOGLE_API_KEY is required.", file=sys.stderr)
         return 1
 
     session = requests.Session()
@@ -432,6 +463,7 @@ def main() -> int:
             session,
             args.api_base_url,
             target=target,
+            provider=args.provider,
             timeout=args.timeout,
         )
         indices = select_page_indices(len(page_images), args.sample_pages, args.page)
