@@ -34,21 +34,6 @@ DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_STATE_FILE = ".manhwa-agent-state.json"
 
 
-def normalize_username(value: str) -> str:
-    normalized = "".join(
-        character.lower()
-        for character in value.strip()
-        if character.isalnum() or character in {"_", "-", "."}
-    )
-    if len(normalized) < 3:
-        raise ScriptError("Username must be at least 3 valid characters.")
-    return normalized[:32]
-
-
-def username_to_auth_email(username: str) -> str:
-    return f"{normalize_username(username)}@miru.local"
-
-
 def load_env_file(path: Path) -> None:
     if not path.exists():
         return
@@ -367,8 +352,7 @@ def register_account(
 def sign_in_supabase(
     session: requests.Session,
     *,
-    supabase_url: str,
-    anon_key: str,
+    api_base_url: str,
     username: str,
     password: str,
     timeout: int,
@@ -376,14 +360,10 @@ def sign_in_supabase(
     payload = request_json(
         session,
         "POST",
-        f"{supabase_url.rstrip('/')}/auth/v1/token?grant_type=password",
+        build_url(api_base_url, "/api/v1/auth/login"),
         timeout=timeout,
-        headers={
-            "apikey": anon_key,
-            "Content-Type": "application/json",
-        },
         json_body={
-            "email": username_to_auth_email(username),
+            "username": username,
             "password": password,
         },
     )
@@ -467,8 +447,6 @@ def run_cycle(
     args: argparse.Namespace,
     *,
     grok_api_key: str,
-    supabase_url: str,
-    supabase_anon_key: str,
 ) -> bool:
     state_file = Path(args.state_file)
     state = load_state(state_file)
@@ -504,8 +482,7 @@ def run_cycle(
     )
     access_token = sign_in_supabase(
         session,
-        supabase_url=supabase_url,
-        anon_key=supabase_anon_key,
+        api_base_url=args.api_base_url,
         username=username,
         password=password,
         timeout=args.timeout,
@@ -563,15 +540,11 @@ def main() -> int:
     args = parse_args()
 
     grok_api_key = os.environ.get("XAI_API_KEY", "").strip()
-    supabase_url = os.environ.get("SUPABASE_URL", "").strip()
-    supabase_anon_key = os.environ.get("SUPABASE_ANON_KEY", "").strip()
 
     missing = [
         name
         for name, value in (
             ("XAI_API_KEY", grok_api_key),
-            ("SUPABASE_URL", supabase_url),
-            ("SUPABASE_ANON_KEY", supabase_anon_key),
         )
         if not value
     ]
@@ -589,8 +562,6 @@ def main() -> int:
                 session,
                 args,
                 grok_api_key=grok_api_key,
-                supabase_url=supabase_url,
-                supabase_anon_key=supabase_anon_key,
             )
         except requests.HTTPError as exc:
             detail = exc.response.text.strip() if exc.response is not None else str(exc)

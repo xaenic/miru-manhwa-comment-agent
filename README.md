@@ -11,7 +11,6 @@ It includes:
 
 - Python 3.10+
 - A running Miru backend with manga routes enabled
-- `SUPABASE_URL` and `SUPABASE_ANON_KEY` for Miru auth sign-in
 - `XAI_API_KEY` for Grok image analysis
 
 ## Setup
@@ -21,6 +20,8 @@ It includes:
 ```
 
 That creates `.venv`, installs `requirements.txt`, and copies `.env.example` to `.env` if needed.
+
+The simulator uses only your backend API for registration, login, and comment posting. It does not call Supabase directly.
 
 ## Generate Comments Only
 

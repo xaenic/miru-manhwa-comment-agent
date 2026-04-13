@@ -52,8 +52,6 @@ cat <<'EOF'
 Setup complete.
 
 Required env vars in .env before posting:
-- SUPABASE_URL
-- SUPABASE_ANON_KEY
 - XAI_API_KEY
 
 One-cycle dry run:
