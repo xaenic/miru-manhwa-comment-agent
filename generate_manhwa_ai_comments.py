@@ -38,6 +38,12 @@ class ChapterTarget:
     chapter_title: str | None
 
 
+def normalize_language_code(value: str | None) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip().casefold()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate short AI comment ideas from a Miru manhwa chapter image using Grok."
@@ -138,7 +144,7 @@ def select_latest_chapter(
     for item in items:
         if not isinstance(item, dict):
             continue
-        if item.get("language") != language:
+        if normalize_language_code(item.get("language")) != normalize_language_code(language):
             continue
         entry_slug = item.get("entry_slug")
         if isinstance(entry_slug, str) and entry_slug.strip():
@@ -147,7 +153,15 @@ def select_latest_chapter(
             chapter_title = item.get("title") if isinstance(item.get("title"), str) else None
             return entry_slug.strip(), chapter_id, chapter_number, chapter_title
 
-    raise ScriptError(f"No chapter entries were found for language {language!r}.")
+    available_languages = sorted(
+        {
+            str(item.get("language")).strip()
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("language"), str) and str(item.get("language")).strip()
+        }
+    )
+    available_message = f" Available: {', '.join(available_languages)}." if available_languages else ""
+    raise ScriptError(f"No chapter entries were found for language {language!r}.{available_message}")
 
 
 def load_target(args: argparse.Namespace, session: requests.Session) -> ChapterTarget:

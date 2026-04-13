@@ -21,6 +21,7 @@ from generate_manhwa_ai_comments import (
     fetch_image_as_data_url,
     fetch_series_title,
     load_chapter_pages,
+    normalize_language_code,
     select_page_indices,
 )
 
@@ -214,7 +215,11 @@ def select_target_chapters(
     entry_slugs: list[str] | None,
     latest_count: int,
 ) -> list[dict[str, object]]:
-    by_language = [item for item in items if item.get("language") == language]
+    normalized_language = normalize_language_code(language)
+    by_language = [
+        item for item in items
+        if normalize_language_code(item.get("language")) == normalized_language
+    ]
     if entry_slugs:
         selected: list[dict[str, object]] = []
         wanted = [entry_slug.strip() for entry_slug in entry_slugs if entry_slug.strip()]
@@ -235,7 +240,15 @@ def select_target_chapters(
     if latest_count > 0:
         selected = selected[:latest_count]
     if not selected:
-        raise ScriptError(f"No chapters were found for language {language!r}.")
+        available_languages = sorted(
+            {
+                str(item.get("language")).strip()
+                for item in items
+                if isinstance(item.get("language"), str) and str(item.get("language")).strip()
+            }
+        )
+        available_message = f" Available: {', '.join(available_languages)}." if available_languages else ""
+        raise ScriptError(f"No chapters were found for language {language!r}.{available_message}")
     return selected
 
 
