@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="${ROOT_DIR}/.venv"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+cd "${ROOT_DIR}"
+
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  echo "Python interpreter not found: ${PYTHON_BIN}" >&2
+  exit 1
+fi
+
+if [ ! -d "${VENV_DIR}" ]; then
+  "${PYTHON_BIN}" -m venv "${VENV_DIR}"
+fi
+
+"${VENV_DIR}/bin/python" -m pip install --upgrade pip
+"${VENV_DIR}/bin/python" -m pip install -r requirements.txt
+
+if [ ! -f "${ROOT_DIR}/.env" ]; then
+  cp "${ROOT_DIR}/.env.example" "${ROOT_DIR}/.env"
+  echo "Created .env from .env.example"
+fi
+
+cat <<'EOF'
+
+Setup complete.
+
+Required env vars in .env before posting:
+- SUPABASE_URL
+- SUPABASE_ANON_KEY
+- XAI_API_KEY
+
+One-cycle dry run:
+  ./.venv/bin/python simulate_manhwa_comment_agents.py \
+    --api-base-url http://127.0.0.1:5000 \
+    --series-slug YOUR_MANHWA_SLUG \
+    --language en \
+    --run-once \
+    --dry-run
+
+Continuous run every 10 minutes:
+  ./.venv/bin/python simulate_manhwa_comment_agents.py \
+    --api-base-url http://127.0.0.1:5000 \
+    --series-slug YOUR_MANHWA_SLUG \
+    --language en \
+    --interval-minutes 10
+EOF
